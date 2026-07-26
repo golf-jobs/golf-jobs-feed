@@ -3,7 +3,7 @@
 
   "sources": [
 
-    { "enabled": true,  "slug": "whoop",            "company": "WHOOP",                       "ats": "lever",          "token": "whoop" },
+    { "enabled": false,  "slug": "whoop",            "company": "WHOOP",                       "ats": "lever",          "token": "whoop" },
     { "enabled": true,  "slug": "trackman",         "company": "TrackMan",                    "ats": "recruitee",      "token": "trackman" },
     { "enabled": true,  "slug": "american-golf",    "company": "American Golf (UK)",          "ats": "smartrecruiters","token": "AmericanGolfUKLtd" },
     { "enabled": true,  "slug": "nbc-golf",         "company": "GolfNow / NBC Sports Next",   "ats": "smartrecruiters","token": "NBCUniversal3" },
