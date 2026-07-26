@@ -1,0 +1,64 @@
+{
+  "_readme": "Each source = one golf employer + its ATS. 'slug' must be unique (used to build the stable job_reference). Set 'enabled': false to skip a source. Entries marked _verify need their token/site confirmed once (see RUNBOOK step 2) before enabling. Workday needs host+tenant+site; everything else needs 'token'.",
+
+  "sources": [
+
+    { "enabled": true,  "slug": "whoop",            "company": "WHOOP",                       "ats": "lever",          "token": "whoop" },
+    { "enabled": true,  "slug": "trackman",         "company": "TrackMan",                    "ats": "recruitee",      "token": "trackman" },
+    { "enabled": true,  "slug": "american-golf",    "company": "American Golf (UK)",          "ats": "smartrecruiters","token": "AmericanGolfUKLtd" },
+    { "enabled": true,  "slug": "nbc-golf",         "company": "GolfNow / NBC Sports Next",   "ats": "smartrecruiters","token": "NBCUniversal3" },
+
+    { "enabled": true,  "slug": "acushnet",         "company": "Titleist / Acushnet",         "ats": "workday", "host": "acushnetgolf.wd12.myworkdayjobs.com", "tenant": "acushnetgolf",   "site": "ACU" },
+    { "enabled": true,  "slug": "taylormade",       "company": "TaylorMade Golf",             "ats": "workday", "host": "taylormadegolf.wd5.myworkdayjobs.com", "tenant": "taylormadegolf", "site": "taylormadegolf" },
+    { "enabled": true,  "slug": "callaway",         "company": "Topgolf Callaway Brands",     "ats": "workday", "host": "tcbrands.wd1.myworkdayjobs.com",       "tenant": "tcbrands",       "site": "callaway-careers" },
+    { "enabled": true,  "slug": "topgolf",          "company": "Topgolf",                     "ats": "workday", "host": "topgolf.wd501.myworkdayjobs.com",      "tenant": "topgolf",        "site": "TopgolfCareers" },
+    { "enabled": true,  "slug": "puma-cobra",       "company": "Cobra Golf (PUMA)",           "ats": "workday", "host": "puma.wd502.myworkdayjobs.com",         "tenant": "puma",           "site": "Jobs_at_Puma" },
+    { "enabled": true,  "slug": "pgatour",          "company": "PGA TOUR",                    "ats": "workday", "host": "pgatour.wd5.myworkdayjobs.com",        "tenant": "pgatour",        "site": "PGATOURExternal" },
+    { "enabled": true,  "slug": "pgatss",           "company": "PGA TOUR Superstore",         "ats": "workday", "host": "pgatoursuperstore.wd12.myworkdayjobs.com","tenant": "pgatoursuperstore","site": "PGAT_SS" },
+    { "enabled": true,  "slug": "dsg-golfgalaxy",   "company": "Golf Galaxy / Dick's",        "ats": "workday", "host": "dickssportinggoods.wd1.myworkdayjobs.com","tenant": "dickssportinggoods","site": "DSG" },
+    { "enabled": true,  "slug": "peter-millar",     "company": "Peter Millar",                "ats": "workday", "host": "petermillarllc.wd12.myworkdayjobs.com","tenant": "petermillarllc", "site": "PMI" },
+    { "enabled": true,  "slug": "foresight",        "company": "Foresight Sports",            "ats": "workday", "host": "vistaoutdoor.wd1.myworkdayjobs.com",   "tenant": "vistaoutdoor",   "site": "EXTERNAL_FORESIGHT" },
+    { "enabled": true,  "slug": "bushnell",         "company": "Bushnell Golf (Revelyst)",    "ats": "workday", "host": "revelyst.wd1.myworkdayjobs.com",       "tenant": "revelyst",       "site": "EXTERNAL_REVELYST" },
+    { "enabled": true,  "slug": "pga-america",      "company": "PGA of America",              "ats": "workday", "host": "pgahq.wd1.myworkdayjobs.com",          "tenant": "pgahq",          "site": "PGAHQ" },
+    { "enabled": true,  "slug": "dpworld-tour",     "company": "DP World Tour",               "ats": "workday", "host": "europeantour.wd3.myworkdayjobs.com",   "tenant": "europeantour",   "site": "europeantour" },
+
+    { "enabled": false, "slug": "arcis",            "company": "Arcis Golf",                  "ats": "workday", "host": "arcis.wd12.myworkdayjobs.com",         "tenant": "arcis",          "site": "_verify_site_id" },
+    { "enabled": false, "slug": "discovery-land",   "company": "Discovery Land Company",      "ats": "workday", "host": "discoverylandco.wd5.myworkdayjobs.com","tenant": "discoverylandco","site": "_verify_site_id" },
+    { "enabled": false, "slug": "costa-navarino",   "company": "Costa Navarino",              "ats": "workable",       "token": "_verify_subdomain" },
+    { "enabled": true,  "slug": "your-golf-travel", "company": "Your Golf Travel",            "ats": "teamtailor",     "token": "yourgolftravel" },
+    { "enabled": false, "slug": "castore",          "company": "Castore",                     "ats": "teamtailor",     "host": "careers.castore.com", "_note": "custom domain — verify /jobs.rss is enabled before switching on" },
+    { "enabled": false, "slug": "GREENHOUSE_EXAMPLE","company": "Example (Greenhouse)",       "ats": "greenhouse",     "token": "boardtoken" },
+
+    "--- NEW FROM TOP100 + NGF RESEARCH. Enabled = high-confidence, mostly golf. LARGE PARENT = disabled (full ATS would flood feed with non-golf jobs; enable only with JBoard keyword filtering like golf/greenkeeper/turf). PHASE 2 = ATS with no adapter yet (Teamtailor/Dayforce); use JBoard Web Page Scraper or ask to add the adapter. ---",
+
+    { "enabled": true,  "slug": "dream-golf",       "company": "Bandon Dunes / Sand Valley (Dream Golf)", "ats": "lever",          "token": "dreamgolf" },
+    { "enabled": true,  "slug": "golftec",          "company": "GOLFTEC",                     "ats": "workable",       "token": "golftec1" },
+    { "enabled": true,  "slug": "8am-golf",         "company": "8AM Golf",                    "ats": "greenhouse",     "token": "8amgolf" },
+    { "enabled": true,  "slug": "golf-plus",        "company": "GOLF+ (VR)",                  "ats": "lever",          "token": "golfscopeinc" },
+    { "enabled": true,  "slug": "jonas-club",       "company": "Jonas Club Software",         "ats": "workday", "host": "talentmanagementsolution.wd3.myworkdayjobs.com", "tenant": "talentmanagementsolution", "site": "JonasClub-Careers" },
+    { "enabled": true,  "slug": "cabot",            "company": "Cabot (Cape Breton)",         "ats": "smartrecruiters","token": "Cabot-CabotCapeBreton" },
+    { "enabled": true,  "slug": "tpc-network",      "company": "TPC Network (PGA TOUR)",      "ats": "workday", "host": "pgatour.wd5.myworkdayjobs.com", "tenant": "pgatour", "site": "TPCExternal" },
+    { "enabled": true,  "slug": "rapsodo",          "company": "Rapsodo",                     "ats": "workable",       "token": "rapsodo" },
+
+    "--- LARGE PARENT COMPANIES (disabled) — enable only with JBoard keyword filtering ---",
+    { "enabled": false, "slug": "toro",             "company": "The Toro Company (turf)",     "ats": "workday", "host": "ttc.wd1.myworkdayjobs.com",            "tenant": "ttc",            "site": "Toro_External_Careers" },
+    { "enabled": false, "slug": "syngenta",         "company": "Syngenta (turf)",             "ats": "smartrecruiters","token": "SyngentaGroup" },
+    { "enabled": false, "slug": "corteva",          "company": "Corteva Agriscience (turf)",  "ats": "workday", "host": "corteva.wd5.myworkdayjobs.com",        "tenant": "Corteva",        "site": "Corteva" },
+    { "enabled": false, "slug": "sunbelt-rentals",  "company": "Sunbelt Rentals",             "ats": "workday", "host": "sunbeltrentals.wd1.myworkdayjobs.com", "tenant": "sunbeltrentals", "site": "sbcareers" },
+    { "enabled": false, "slug": "bridgestone-corp", "company": "Bridgestone (corporate)",     "ats": "workday", "host": "bridgestone.wd5.myworkdayjobs.com",    "tenant": "bridgestone",    "site": "External" },
+    { "enabled": false, "slug": "golf-digest",      "company": "Golf Digest (Warner Bros Discovery)", "ats": "workday", "host": "warnerbros.wd5.myworkdayjobs.com", "tenant": "warnerbros", "site": "global" },
+    { "enabled": false, "slug": "lightspeed",       "company": "Lightspeed Golf (POS)",       "ats": "greenhouse",     "token": "lightspeedhq" },
+    { "enabled": false, "slug": "pbi-gordon",       "company": "PBI-Gordon (turf)",           "ats": "greenhouse",     "token": "pbigordoncorporation" },
+    { "enabled": false, "slug": "club-prophet",     "company": "Club Prophet (Fullsteam)",    "ats": "workday", "host": "fullsteam.wd1.myworkdayjobs.com",      "tenant": "fullsteam",      "site": "External" },
+
+    "--- TEAMTAILOR RESORTS (enabled) — public RSS feed, reliable ---",
+    { "enabled": true,  "slug": "terre-blanche",    "company": "Terre Blanche",               "ats": "teamtailor",     "token": "hotelterreblanche" },
+    { "enabled": true,  "slug": "great-northern",   "company": "Great Northern (Denmark)",    "ats": "teamtailor",     "token": "greatnorthernas" },
+    { "enabled": true,  "slug": "rocco-forte",      "company": "Verdura Resort (Rocco Forte)","ats": "teamtailor",     "token": "roccofortehotelsitaly" },
+
+    "--- DAYFORCE (disabled by default) — behind Cloudflare; may 403 from a cloud runner. Verify job_board_code, then try enabling. If it FAILs, use JBoard Web Page Scraper. ---",
+    { "enabled": false, "slug": "pinehurst",        "company": "Pinehurst Resort",            "ats": "dayforce",       "token": "pinehurst", "job_board_code": "CANDIDATEPORTAL" },
+    { "enabled": false, "slug": "kiawah",           "company": "Kiawah Island Golf Resort",   "ats": "dayforce",       "token": "kiawah", "job_board_code": "CANDIDATEPORTAL" }
+
+  ]
+}

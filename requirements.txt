@@ -1,0 +1,3 @@
+# No third-party packages required.
+# feed_generator.py uses only the Python 3.8+ standard library
+# (urllib, json, gzip, xml). Just install Python 3 and run it.
