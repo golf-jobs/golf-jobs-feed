@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Golf Jobs — master XML feed generator for JBoard.
-Enforces strict taxonomy mapping and anti-keyword filtering.
+Enforces strict taxonomy mapping, anti-keyword filtering, and public advert URLs.
 """
 
 import argparse
@@ -52,7 +52,7 @@ def map_category(raw_cat, title, desc):
     if any(k in search_text for k in ["business", "strategy", "analyst"]): return "Business"
     if any(k in search_text for k in ["engineer"]): return "Engineering"
     
-    return "" # If no match is found, leave it blank to protect taxonomy
+    return "" 
 
 def map_job_type(raw_type, title):
     """Maps raw ATS data ONLY to approved JBoard Job Types, or returns blank."""
@@ -64,7 +64,7 @@ def map_job_type(raw_type, title):
     if "intern" in search_text: return "Internship"
     if "temp" in search_text or "seasonal" in search_text or "summer" in search_text: return "Temp"
     
-    return "" # If no match is found, leave it blank
+    return "" 
 
 # --- HTTP HELPERS ---
 def _http(url, method="GET", data=None, headers=None):
@@ -117,14 +117,15 @@ def make_job(source_slug, native_id, title, company, apply_url, description="", 
         "remote": bool(remote), "pubDate": _to_rfc822(posted)
     }
 
-# --- ADAPTERS (Truncated for space, they operate exactly as before but data gets mapped later) ---
+# --- ADAPTERS ---
 def fetch_greenhouse(src):
     data = _http(f"https://boards-api.greenhouse.io/v1/boards/{src['token']}/jobs?content=true")
     return [make_job(src["slug"], j["id"], j.get("title"), src["company"], j.get("absolute_url"), html.unescape(j.get("content", "")), (j.get("location") or {}).get("name", ""), j["departments"][0].get("name", "") if j.get("departments") else "", posted=j.get("updated_at")) for j in data.get("jobs", [])]
 
 def fetch_lever(src):
     data = _http(f"https://api.lever.co/v0/postings/{src['token']}?mode=json")
-    return [make_job(src["slug"], j["id"], j.get("text"), src["company"], j.get("applyUrl") or j.get("hostedUrl"), j.get("descriptionPlain", ""), (j.get("categories") or {}).get("location", ""), (j.get("categories") or {}).get("department", ""), (j.get("categories") or {}).get("commitment", ""), posted=j.get("createdAt")) for j in data]
+    # Prioritizes hostedUrl (the public advert) over the applyUrl form
+    return [make_job(src["slug"], j["id"], j.get("text"), src["company"], j.get("hostedUrl") or j.get("applyUrl"), j.get("descriptionPlain", ""), (j.get("categories") or {}).get("location", ""), (j.get("categories") or {}).get("department", ""), (j.get("categories") or {}).get("commitment", ""), posted=j.get("createdAt")) for j in data]
 
 def fetch_recruitee(src):
     data = _http(f"https://{src['token']}.recruitee.com/api/offers/")
@@ -144,7 +145,8 @@ def fetch_smartrecruiters(src):
 
 def fetch_ashby(src):
     data = _http(f"https://api.ashbyhq.com/posting-api/job-board/{src['token']}?includeCompensation=true")
-    return [make_job(src["slug"], j["id"], j.get("title"), src["company"], j.get("applyUrl") or j.get("jobUrl"), j.get("descriptionHtml", ""), j.get("location", ""), j.get("department", ""), j.get("employmentType", ""), bool(j.get("isRemote")), j.get("publishedAt")) for j in data.get("jobs", [])]
+    # Prioritizes jobUrl (the public advert) over the applyUrl form
+    return [make_job(src["slug"], j["id"], j.get("title"), src["company"], j.get("jobUrl") or j.get("applyUrl"), j.get("descriptionHtml", ""), j.get("location", ""), j.get("department", ""), j.get("employmentType", ""), bool(j.get("isRemote")), j.get("publishedAt")) for j in data.get("jobs", [])]
 
 def fetch_workable(src):
     data = _http(f"https://apply.workable.com/api/v1/widget/accounts/{src['token']}?details=true")
@@ -158,7 +160,8 @@ def fetch_workday(src):
         postings = data.get("jobPostings", [])
         for p in postings:
             ext = p.get("externalPath", "")
-            apply_url = f"https://{host}{ext}" if ext else ""
+            apply_url = f"https://{host}/en-US/{site}{ext}" if ext else ""
+            
             native = ext.rsplit("/", 1)[-1] if ext else p.get("bulletFields", [""])[0]
             desc_html = f"<p>View full details and apply on the {src['company']} career site.</p>"
             if ext:
@@ -292,7 +295,6 @@ def build_rss(jobs):
            '    <title>Golf Jobs — Aggregated Employer Feed</title>', '    <link>https://www.golf-jobs.com</link>',
            '    <description>Live vacancies aggregated from golf employer ATS platforms</description>', f'    <lastBuildDate>{now}</lastBuildDate>']
     for j in jobs:
-        # STRICT TAXONOMY ENFORCEMENT HAPPENS HERE BEFORE XML CREATION
         mapped_category = map_category(j.get("category", ""), j.get("title", ""), j.get("description", ""))
         mapped_job_type = map_job_type(j.get("job_type", ""), j.get("title", ""))
         
@@ -322,14 +324,13 @@ def main():
             jobs = ADAPTERS[src["ats"]](src)
             if src.get("golf_only"):
                 filtered = []
-                # THE ANTI-KEYWORD RESORT FILTER
                 anti_keywords = ["tennis", "spa ", "spa,", "massage", "yoga", "ski ", "snow", "esthetician", "hair stylist", "childcare", "nanny", "pool", "swim", "lifeguard"]
                 keywords = ["golf", "pga", "greenkeeper", "agronomy", "turf", "caddie", "clubhouse", "titleist", "taylormade", "trackman", "putting", "whistling straits", "old course", "blackwolf run"]
                 
                 for j in jobs:
                     title_lower = j.get('title','').lower()
                     if any(anti in title_lower for anti in anti_keywords):
-                        continue # Kill the job if it's a tennis/spa/pool role
+                        continue
                         
                     search_text = f"{title_lower} {j.get('category','').lower()} {j.get('description','').lower()} {j.get('company','').lower()}"
                     if any(k in search_text for k in keywords): filtered.append(j)
