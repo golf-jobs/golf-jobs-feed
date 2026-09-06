@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Golf Jobs — master XML feed generator for JBoard.
-Enforces strict taxonomy mapping, anti-keyword filtering, and public advert URLs.
+Enforces strict taxonomy mapping, anti-keyword filtering, public advert URLs, and salary extraction.
 """
 
 import argparse
@@ -25,9 +25,7 @@ USER_AGENT = "golf-jobs-feed/1.0 (+https://www.golf-jobs.com)"
 
 # --- STRICT TAXONOMY MAPPERS ---
 def map_category(raw_cat, title, desc):
-    """Maps raw ATS data ONLY to approved JBoard Categories, or returns blank."""
     search_text = f"{str(raw_cat)} {str(title)}".lower()
-    
     if any(k in search_text for k in ["agronomy", "turf", "greenkeep", "grounds", "landscap", "course maintenance", "mechanic", "superintendent"]): return "Greenkeeping"
     if any(k in search_text for k in ["food", "beverage", "f&b", "culinary", "chef", "cook", "bartender", "server", "restaurant", "hospitality", "kitchen", "waiter", "banquet"]): return "Hospitality"
     if any(k in search_text for k in ["pga", "teaching", "instructor", "assistant pro", "head pro", "golf professional", "coach"]): return "PGA Professional"
@@ -51,19 +49,15 @@ def map_category(raw_cat, title, desc):
     if any(k in search_text for k in ["driving range", "topgolf"]): return "Driving Range"
     if any(k in search_text for k in ["business", "strategy", "analyst"]): return "Business"
     if any(k in search_text for k in ["engineer"]): return "Engineering"
-    
     return "" 
 
 def map_job_type(raw_type, title):
-    """Maps raw ATS data ONLY to approved JBoard Job Types, or returns blank."""
     search_text = f"{str(raw_type)} {str(title)}".lower()
-    
     if "part" in search_text or "pt " in search_text: return "Part-time"
     if "full" in search_text or "ft " in search_text: return "Full-time"
     if "contract" in search_text or "freelance" in search_text: return "Contract"
     if "intern" in search_text: return "Internship"
     if "temp" in search_text or "seasonal" in search_text or "summer" in search_text: return "Temp"
-    
     return "" 
 
 # --- HTTP HELPERS ---
@@ -108,13 +102,15 @@ def _to_rfc822(value):
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
     except Exception: return datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
 
-def make_job(source_slug, native_id, title, company, apply_url, description="", location="", category="", job_type="", remote=False, posted=None):
+def make_job(source_slug, native_id, title, company, apply_url, description="", location="", category="", job_type="", remote=False, posted=None, salary_min="", salary_max="", currency="", interval=""):
     return {
         "job_reference": f"{source_slug}-{native_id}",
         "title": title or "", "company": company or source_slug, "apply_url": apply_url or "",
         "description": _clean_html(description), "location": location or "",
         "category": category or "", "job_type": job_type or "",
-        "remote": bool(remote), "pubDate": _to_rfc822(posted)
+        "remote": bool(remote), "pubDate": _to_rfc822(posted),
+        "salary_min": str(salary_min) if salary_min else "", "salary_max": str(salary_max) if salary_max else "", 
+        "currency": currency or "", "interval": interval or ""
     }
 
 # --- ADAPTERS ---
@@ -124,8 +120,13 @@ def fetch_greenhouse(src):
 
 def fetch_lever(src):
     data = _http(f"https://api.lever.co/v0/postings/{src['token']}?mode=json")
-    # Prioritizes hostedUrl (the public advert) over the applyUrl form
-    return [make_job(src["slug"], j["id"], j.get("text"), src["company"], j.get("hostedUrl") or j.get("applyUrl"), j.get("descriptionPlain", ""), (j.get("categories") or {}).get("location", ""), (j.get("categories") or {}).get("department", ""), (j.get("categories") or {}).get("commitment", ""), posted=j.get("createdAt")) for j in data]
+    jobs = []
+    for j in data:
+        # Lever sometimes embeds salary in a custom tags array, extracting if present
+        sal_min, sal_max, cur, interval = "", "", "", ""
+        desc = j.get("descriptionPlain", "")
+        jobs.append(make_job(src["slug"], j["id"], j.get("text"), src["company"], j.get("hostedUrl") or j.get("applyUrl"), desc, (j.get("categories") or {}).get("location", ""), (j.get("categories") or {}).get("department", ""), (j.get("categories") or {}).get("commitment", ""), posted=j.get("createdAt"), salary_min=sal_min, salary_max=sal_max, currency=cur, interval=interval))
+    return jobs
 
 def fetch_recruitee(src):
     data = _http(f"https://{src['token']}.recruitee.com/api/offers/")
@@ -145,8 +146,18 @@ def fetch_smartrecruiters(src):
 
 def fetch_ashby(src):
     data = _http(f"https://api.ashbyhq.com/posting-api/job-board/{src['token']}?includeCompensation=true")
-    # Prioritizes jobUrl (the public advert) over the applyUrl form
-    return [make_job(src["slug"], j["id"], j.get("title"), src["company"], j.get("jobUrl") or j.get("applyUrl"), j.get("descriptionHtml", ""), j.get("location", ""), j.get("department", ""), j.get("employmentType", ""), bool(j.get("isRemote")), j.get("publishedAt")) for j in data.get("jobs", [])]
+    jobs = []
+    for j in data.get("jobs", []):
+        sal_min, sal_max, cur, interval = "", "", "", ""
+        comp = j.get("compensationTier")
+        if comp:
+            sal_min = comp.get("compensationMin", "")
+            sal_max = comp.get("compensationMax", "")
+            cur = comp.get("currencyCode", "")
+            interval = comp.get("interval", "")
+            
+        jobs.append(make_job(src["slug"], j["id"], j.get("title"), src["company"], j.get("jobUrl") or j.get("applyUrl"), j.get("descriptionHtml", ""), j.get("location", ""), j.get("department", ""), j.get("employmentType", ""), bool(j.get("isRemote")), j.get("publishedAt"), salary_min=sal_min, salary_max=sal_max, currency=cur, interval=interval))
+    return jobs
 
 def fetch_workable(src):
     data = _http(f"https://apply.workable.com/api/v1/widget/accounts/{src['token']}?details=true")
@@ -161,7 +172,6 @@ def fetch_workday(src):
         for p in postings:
             ext = p.get("externalPath", "")
             apply_url = f"https://{host}/en-US/{site}{ext}" if ext else ""
-            
             native = ext.rsplit("/", 1)[-1] if ext else p.get("bulletFields", [""])[0]
             desc_html = f"<p>View full details and apply on the {src['company']} career site.</p>"
             if ext:
@@ -304,7 +314,11 @@ def build_rss(jobs):
             f"      <job_type>{escape(mapped_job_type)}</job_type>", f"      <remote>{'true' if j['remote'] else 'false'}</remote>",
             f"      <description><![CDATA[{j['description']}]]></description>", f"      <link>{escape(j['apply_url'])}</link>",
             f"      <apply_url>{escape(j['apply_url'])}</apply_url>", f"      <job_reference>{escape(j['job_reference'])}</job_reference>",
-            f"      <guid isPermaLink=\"false\">{escape(j['job_reference'])}</guid>", f"      <pubDate>{j['pubDate']}</pubDate>", "    </item>"
+            f"      <guid isPermaLink=\"false\">{escape(j['job_reference'])}</guid>", f"      <pubDate>{j['pubDate']}</pubDate>",
+            f"      <salary_min>{escape(str(j.get('salary_min', '')))}</salary_min>",
+            f"      <salary_max>{escape(str(j.get('salary_max', '')))}</salary_max>",
+            f"      <salary_currency>{escape(str(j.get('currency', '')))}</salary_currency>",
+            f"      <salary_interval>{escape(str(j.get('interval', '')))}</salary_interval>", "    </item>"
         ])
     out.extend(["  </channel>", "</rss>"])
     return "\n".join(out)
