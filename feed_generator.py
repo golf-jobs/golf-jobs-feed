@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Golf Jobs — master XML feed generator for JBoard.
-Enforces strict taxonomy mapping, anti-keyword filtering, public advert URLs, and salary extraction.
+Enforces strict taxonomy mapping, anti-keyword filtering, public advert URLs, salary extraction, and a 20-day freshness limit.
 """
 
 import argparse
@@ -12,6 +12,7 @@ import json
 import re
 import sys
 import time
+import email.utils
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from urllib import request, error
@@ -99,10 +100,32 @@ def _to_rfc822(value):
         if isinstance(value, (int, float)):
             ts = value / 1000 if value > 1e12 else value
             return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        p_str = str(value)
+        if ',' in p_str or ' GMT' in p_str:
+            return email.utils.parsedate_to_datetime(p_str).astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        return datetime.fromisoformat(p_str.replace("Z", "+00:00")).astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
     except Exception: return datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
 
 def make_job(source_slug, native_id, title, company, apply_url, description="", location="", category="", job_type="", remote=False, posted=None, salary_min="", salary_max="", currency="", interval=""):
+    # 20-DAY FRESHNESS CHECK
+    if posted:
+        try:
+            if isinstance(posted, (int, float)):
+                ts = posted / 1000 if posted > 1e12 else posted
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            else:
+                p_str = str(posted)
+                if ',' in p_str or ' GMT' in p_str:
+                    dt = email.utils.parsedate_to_datetime(p_str).astimezone(timezone.utc)
+                else:
+                    dt = datetime.fromisoformat(p_str.replace("Z", "+00:00")).astimezone(timezone.utc)
+            
+            # If the job was published more than 20 days ago, instantly reject it.
+            if (datetime.now(timezone.utc) - dt).days > 20:
+                return None
+        except Exception:
+            pass # Keep job if date parsing fails
+
     return {
         "job_reference": f"{source_slug}-{native_id}",
         "title": title or "", "company": company or source_slug, "apply_url": apply_url or "",
@@ -122,7 +145,6 @@ def fetch_lever(src):
     data = _http(f"https://api.lever.co/v0/postings/{src['token']}?mode=json")
     jobs = []
     for j in data:
-        # Lever sometimes embeds salary in a custom tags array, extracting if present
         sal_min, sal_max, cur, interval = "", "", "", ""
         desc = j.get("descriptionPlain", "")
         jobs.append(make_job(src["slug"], j["id"], j.get("text"), src["company"], j.get("hostedUrl") or j.get("applyUrl"), desc, (j.get("categories") or {}).get("location", ""), (j.get("categories") or {}).get("department", ""), (j.get("categories") or {}).get("commitment", ""), posted=j.get("createdAt"), salary_min=sal_min, salary_max=sal_max, currency=cur, interval=interval))
@@ -155,7 +177,6 @@ def fetch_ashby(src):
             sal_max = comp.get("compensationMax", "")
             cur = comp.get("currencyCode", "")
             interval = comp.get("interval", "")
-            
         jobs.append(make_job(src["slug"], j["id"], j.get("title"), src["company"], j.get("jobUrl") or j.get("applyUrl"), j.get("descriptionHtml", ""), j.get("location", ""), j.get("department", ""), j.get("employmentType", ""), bool(j.get("isRemote")), j.get("publishedAt"), salary_min=sal_min, salary_max=sal_max, currency=cur, interval=interval))
     return jobs
 
@@ -336,6 +357,9 @@ def main():
         if not ADAPTERS.get(src["ats"]): continue
         try:
             jobs = ADAPTERS[src["ats"]](src)
+            # Remove any jobs that failed the 20-day age check
+            jobs = [j for j in jobs if j is not None]
+            
             if src.get("golf_only"):
                 filtered = []
                 anti_keywords = ["tennis", "spa ", "spa,", "massage", "yoga", "ski ", "snow", "esthetician", "hair stylist", "childcare", "nanny", "pool", "swim", "lifeguard"]
