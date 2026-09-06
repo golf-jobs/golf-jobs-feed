@@ -30,9 +30,9 @@ jobs:
         uses: actions/cache@v3
         with:
           path: clubs.db
-          key: ${{ runner.os }}-sqlite-db-${{ github.run_id }}
+          key: ${{ runner.os }}-sqlite-db-v2-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-sqlite-db-
+            ${{ runner.os }}-sqlite-db-v2-
 
       - name: Run Global Club Crawler & AI Parser
         env:
@@ -41,8 +41,6 @@ jobs:
           mkdir -p public
           python3 club_crawler.py
           
-      # This step assumes your original feed_generator.py is still running in the other workflow.
-      # You can upload both independent_clubs.xml and feed.xml to the same public folder.
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
