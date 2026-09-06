@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
 Golf Jobs — master XML feed generator for JBoard.
+
+Pulls live vacancies from each golf employer's applicant tracking system (ATS)
+and writes ONE combined RSS feed that JBoard's XML importer can ingest.
 """
+
 import argparse
 import gzip
 import html
@@ -15,12 +19,18 @@ from datetime import datetime, timezone
 from urllib import request, error
 from xml.sax.saxutils import escape
 
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
 USE_NATIVE_DATE = False       
 REQUEST_TIMEOUT = 25          
 RETRIES = 3                   
 RETRY_BACKOFF = 3             
 USER_AGENT = "golf-jobs-feed/1.0 (+https://www.golf-jobs.com)"
 
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
 def _http(url, method="GET", data=None, headers=None):
     hdrs = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if headers:
@@ -78,6 +88,9 @@ def _to_rfc822(value):
     except Exception:
         return _now_rfc822()
 
+# ---------------------------------------------------------------------------
+# Normalised job record
+# ---------------------------------------------------------------------------
 def make_job(source_slug, native_id, title, company, apply_url,
              description="", location="", category="", job_type="",
              remote=False, posted=None):
@@ -94,6 +107,9 @@ def make_job(source_slug, native_id, title, company, apply_url,
         "pubDate": (_to_rfc822(posted) if USE_NATIVE_DATE else _now_rfc822()),
     }
 
+# ---------------------------------------------------------------------------
+# ATS adapters
+# ---------------------------------------------------------------------------
 def fetch_greenhouse(src):
     token = src["token"]
     url = f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true"
@@ -393,6 +409,42 @@ def fetch_adidas(src):
         ))
     return jobs
 
+def fetch_ultipro(src):
+    host, tenant, board = src["host"], src["tenant"], src["token"]
+    url = f"https://{host}/{tenant}/JobBoard/{board}/JobBoardView/LoadSearchResults"
+    jobs, skip, top = [], 0, 50
+    while True:
+        payload = {
+            "opportunitySearch": {"Top": top, "Skip": skip, "QueryString": "", "OrderBy": [{"Value": "postedDateDesc", "PropertyName": "PostedDate", "Ascending": False}]},
+            "matchCriteria": {"LanguageId": 1}
+        }
+        try:
+            data = _http(url, method="POST", data=payload)
+        except Exception:
+            return jobs
+            
+        opportunities = data.get("opportunities", [])
+        for p in opportunities:
+            jid = p.get("Id")
+            apply_url = f"https://{host}/{tenant}/JobBoard/{board}/OpportunityDetail?opportunityId={jid}"
+            loc_str = ""
+            if p.get("Locations"):
+                addr = p["Locations"][0].get("Address", {})
+                state = addr.get("State", {}).get("Name", "") if isinstance(addr.get("State"), dict) else addr.get("State", "")
+                country = addr.get("Country", {}).get("Name", "") if isinstance(addr.get("Country"), dict) else addr.get("Country", "")
+                loc_str = ", ".join(filter(None, [addr.get("City", ""), state, country]))
+            
+            jobs.append(make_job(
+                src["slug"], jid, p.get("Title"), src["company"], apply_url,
+                description=f"<p>View full job details and apply on the {src['company']} careers site.</p>", 
+                location=loc_str, posted=p.get("PostedDate")
+            ))
+            
+        if len(opportunities) < top:
+            break
+        skip += top
+    return jobs
+
 def fetch_rss(src):
     url = src["url"]
     text = _http_text(url)
@@ -459,7 +511,7 @@ ADAPTERS = {
     "workday": fetch_workday, "teamtailor": fetch_teamtailor, "dayforce": fetch_dayforce,
     "cornerstone": fetch_cornerstone, "networx": fetch_networx, "harri": fetch_harri,
     "quintadolago": fetch_quintadolago, "rezoomo": fetch_rezoomo, "adidas": fetch_adidas,
-    "rss": fetch_rss, "schema_scraper": fetch_schema_scraper
+    "rss": fetch_rss, "schema_scraper": fetch_schema_scraper, "ultipro": fetch_ultipro
 }
 
 def build_rss(jobs):
@@ -498,7 +550,7 @@ def main():
             jobs = adapter(src)
             if src.get("golf_only"):
                 filtered = []
-                keywords = ["golf", "pga", "greenkeeper", "agronomy", "turf", "caddie", "clubhouse", "titleist", "taylormade", "trackman", "putting"]
+                keywords = ["golf", "pga", "greenkeeper", "agronomy", "turf", "caddie", "clubhouse", "titleist", "taylormade", "trackman", "putting", "whistling straits", "old course", "blackwolf run"]
                 for j in jobs:
                     search_text = f"{j.get('title','')} {j.get('category','')} {j.get('description','')} {j.get('company','')}".lower()
                     if any(k in search_text for k in keywords): filtered.append(j)
