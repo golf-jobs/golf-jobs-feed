@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Global Independent Club Crawler & AI Parser
-Discovers career pages across 28,000+ domains, detects hash changes, and uses AI to extract jobs.
+Discovers career pages, detects hash changes, uses AI to extract jobs and salaries.
 """
 
 import csv
@@ -32,9 +32,13 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS clubs
                  (url TEXT PRIMARY KEY, name TEXT, country TEXT, career_url TEXT, last_hash TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS jobs
+    
+    # Drop the old jobs table to upgrade the schema with salary columns
+    c.execute('DROP TABLE IF EXISTS jobs')
+    c.execute('''CREATE TABLE jobs
                  (job_reference TEXT PRIMARY KEY, title TEXT, company TEXT, apply_url TEXT, 
-                  description TEXT, location TEXT, category TEXT, pubDate TEXT)''')
+                  description TEXT, location TEXT, category TEXT, pubDate TEXT,
+                  salary_min TEXT, salary_max TEXT, currency TEXT, interval TEXT)''')
     conn.commit()
     return conn
 
@@ -60,7 +64,6 @@ def discover_career_page(club_url):
         req = urllib.request.Request(club_url, headers={'User-Agent': USER_AGENT})
         html = urllib.request.urlopen(req, timeout=TIMEOUT).read().decode('utf-8', errors='ignore')
         
-        # Look for standard career links in the HTML
         links = re.finditer(r'href=["\']([^"\']+)["\']', html, re.IGNORECASE)
         keywords = ['career', 'job', 'vacanc', 'employment', 'work-with']
         
@@ -69,7 +72,6 @@ def discover_career_page(club_url):
             if any(k in link.lower() for k in keywords):
                 return urllib.parse.urljoin(club_url, link)
                 
-        # CMS Probing: If no link is found, blindly test standard paths
         probe_url = urllib.parse.urljoin(club_url, "/vacancies")
         req = urllib.request.Request(probe_url, headers={'User-Agent': USER_AGENT})
         if urllib.request.urlopen(req, timeout=TIMEOUT).getcode() == 200:
@@ -85,7 +87,6 @@ def fetch_and_hash(url):
         req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
         html = urllib.request.urlopen(req, timeout=TIMEOUT).read().decode('utf-8', errors='ignore')
         
-        # Strip HTML tags to get raw text for hashing and AI parsing
         raw_text = re.sub(r'<[^>]+>', ' ', html)
         raw_text = re.sub(r'\s+', ' ', raw_text).strip()
         
@@ -107,13 +108,17 @@ def ai_extract_jobs(raw_text, company_name, apply_url):
     prompt = f"""
     You are a data extraction bot. Read the following text from the career page of {company_name}.
     If there are actual job vacancies listed, extract them and return them as a strictly formatted JSON array of objects. 
-    If there are no jobs, or if it is just a general 'we are always looking for talent' message, return an empty array [].
+    If there are no jobs, return an empty array [].
     
     JSON Object format:
     {{
       "title": "Job Title",
       "category": "Department (e.g., Agronomy, F&B, Golf Operations)",
-      "description": "A short 2-3 sentence summary of the role."
+      "description": "A short 2-3 sentence summary of the role.",
+      "salary_min": "Number only, e.g., 30000 (if mentioned, otherwise leave blank)",
+      "salary_max": "Number only, e.g., 35000 (if mentioned, otherwise leave blank)",
+      "currency": "GBP, USD, EUR (if mentioned, otherwise leave blank)",
+      "interval": "YEARLY, HOURLY, MONTHLY (if mentioned, otherwise leave blank)"
     }}
     
     Text to analyze:
@@ -129,7 +134,6 @@ def ai_extract_jobs(raw_text, company_name, apply_url):
         data = json.loads(response.read().decode('utf-8'))
         text_resp = data['candidates'][0]['content']['parts'][0]['text']
         
-        # Clean markdown code blocks from AI response
         text_resp = text_resp.replace('```json', '').replace('```', '').strip()
         jobs_data = json.loads(text_resp)
         return jobs_data
@@ -141,18 +145,15 @@ def ai_extract_jobs(raw_text, company_name, apply_url):
 def process_club(club_data):
     base_url, name, country, stored_career_url, last_hash = club_data
     
-    # 1. Discover
     career_url = stored_career_url
     if not career_url:
         career_url = discover_career_page(base_url)
-        if not career_url: return None, base_url, "", "" # No page found
+        if not career_url: return None, base_url, "", ""
         
-    # 2. Hash
     raw_text, current_hash = fetch_and_hash(career_url)
     if not raw_text or current_hash == last_hash:
-        return None, base_url, career_url, current_hash # Unchanged or failed
+        return None, base_url, career_url, current_hash 
         
-    # 3. AI Parse
     jobs = ai_extract_jobs(raw_text, name, career_url)
     
     extracted_jobs = []
@@ -167,14 +168,18 @@ def process_club(club_data):
             "description": f"{j.get('description', '')} <p>Apply directly via the {name} careers page.</p>",
             "location": country,
             "category": j.get("category", ""),
-            "pubDate": now
+            "pubDate": now,
+            "salary_min": j.get("salary_min", ""),
+            "salary_max": j.get("salary_max", ""),
+            "currency": j.get("currency", ""),
+            "interval": j.get("interval", "")
         })
         
     return extracted_jobs, base_url, career_url, current_hash
 
 def build_rss(conn):
     c = conn.cursor()
-    c.execute("SELECT title, company, location, category, description, apply_url, job_reference, pubDate FROM jobs")
+    c.execute("SELECT title, company, location, category, description, apply_url, job_reference, pubDate, salary_min, salary_max, currency, interval FROM jobs")
     now = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
     
     out = ['<?xml version="1.0" encoding="UTF-8"?>', '<rss version="2.0">', '  <channel>',
@@ -187,7 +192,11 @@ def build_rss(conn):
             f"      <location>{escape(row[2])}</location>", f"      <category>{escape(row[3])}</category>",
             f"      <description><![CDATA[{row[4]}]]></description>", f"      <link>{escape(row[5])}</link>",
             f"      <apply_url>{escape(row[5])}</apply_url>", f"      <job_reference>{escape(row[6])}</job_reference>",
-            f"      <guid isPermaLink=\"false\">{escape(row[6])}</guid>", f"      <pubDate>{row[7]}</pubDate>", "    </item>"
+            f"      <guid isPermaLink=\"false\">{escape(row[6])}</guid>", f"      <pubDate>{row[7]}</pubDate>",
+            f"      <salary_min>{escape(str(row[8]))}</salary_min>",
+            f"      <salary_max>{escape(str(row[9]))}</salary_max>",
+            f"      <salary_currency>{escape(str(row[10]))}</salary_currency>",
+            f"      <salary_interval>{escape(str(row[11]))}</salary_interval>", "    </item>"
         ])
     out.extend(["  </channel>", "</rss>"])
     
@@ -208,7 +217,6 @@ def main():
     updates_to_make = []
     jobs_to_insert = []
     
-    # Run the workload concurrently
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         results = executor.map(process_club, clubs)
         
@@ -223,12 +231,12 @@ def main():
                 print(f"Found {len(extracted_jobs)} jobs at {base_url}")
                 for j in extracted_jobs:
                     jobs_to_insert.append((j["job_reference"], j["title"], j["company"], j["apply_url"], 
-                                           j["description"], j["location"], j["category"], j["pubDate"]))
+                                           j["description"], j["location"], j["category"], j["pubDate"],
+                                           j["salary_min"], j["salary_max"], j["currency"], j["interval"]))
 
-    # Update Database
     c.executemany("UPDATE clubs SET career_url = ?, last_hash = ? WHERE url = ?", updates_to_make)
-    c.execute("DELETE FROM jobs") # Clear old jobs before inserting new batch
-    c.executemany("INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?)", jobs_to_insert)
+    c.execute("DELETE FROM jobs") 
+    c.executemany("INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", jobs_to_insert)
     conn.commit()
     
     build_rss(conn)
