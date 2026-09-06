@@ -13,6 +13,7 @@ import re
 import hashlib
 import os
 import json
+import time
 import concurrent.futures
 from datetime import datetime, timezone
 from xml.sax.saxutils import escape
@@ -23,7 +24,7 @@ DB_FILE = "clubs.db"
 OUTPUT_XML = "public/independent_clubs.xml"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-MAX_WORKERS = 20  # Number of concurrent website scanners
+MAX_WORKERS = 2  # Reduced to 2 to respect Gemini's 15 RPM free tier limit
 TIMEOUT = 10
 
 def init_db():
@@ -99,6 +100,8 @@ def ai_extract_jobs(raw_text, company_name, apply_url):
         print("No Gemini API key found. Skipping AI extraction.")
         return []
         
+    time.sleep(4) # Force a 4-second delay to stay under the 15 RPM limit
+    
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     prompt = f"""
@@ -205,7 +208,7 @@ def main():
     updates_to_make = []
     jobs_to_insert = []
     
-    # Run the massive workload concurrently
+    # Run the workload concurrently
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         results = executor.map(process_club, clubs)
         
