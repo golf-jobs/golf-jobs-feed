@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Global Independent Club Crawler & AI Parser
-Discovers career pages, detects hash changes, uses AI to extract jobs and salaries.
+Discovers career pages, uses AI to extract jobs, features a self-cleaning dead-link database, and maintains 1:1 XML parity with the Enterprise feed.
 """
 
 import csv
@@ -22,10 +22,14 @@ from xml.sax.saxutils import escape
 CSV_FILE = "Data Golf Clubs September 2020.xlsx - Sheet1.csv"
 DB_FILE = "clubs.db"
 OUTPUT_XML = "public/independent_clubs.xml"
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+# Automatically strips invisible spaces from the GitHub Secret
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip() 
+
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-MAX_WORKERS = 2  # Reduced to 2 to respect Gemini's 15 RPM free tier limit
+MAX_WORKERS = 2  
 TIMEOUT = 10
+MAX_RUNTIME_SECONDS = (5 * 3600) + (15 * 60) # 5 hours and 15 minutes
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -33,11 +37,11 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS clubs
                  (url TEXT PRIMARY KEY, name TEXT, country TEXT, career_url TEXT, last_hash TEXT)''')
     
-    # Drop the old jobs table to upgrade the schema with salary columns
+    # Dropped and recreated to add job_type and remote columns
     c.execute('DROP TABLE IF EXISTS jobs')
     c.execute('''CREATE TABLE jobs
                  (job_reference TEXT PRIMARY KEY, title TEXT, company TEXT, apply_url TEXT, 
-                  description TEXT, location TEXT, category TEXT, pubDate TEXT,
+                  description TEXT, location TEXT, category TEXT, job_type TEXT, remote BOOLEAN, pubDate TEXT,
                   salary_min TEXT, salary_max TEXT, currency TEXT, interval TEXT)''')
     conn.commit()
     return conn
@@ -46,7 +50,7 @@ def load_csv_to_db(conn):
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM clubs")
     if c.fetchone()[0] > 0:
-        return # DB already populated
+        return 
 
     print("Importing 28,000+ global clubs into local SQLite database...")
     with open(CSV_FILE, 'r', encoding='utf-8', errors='ignore') as f:
@@ -92,6 +96,12 @@ def fetch_and_hash(url):
         
         content_hash = hashlib.sha256(raw_text.encode('utf-8')).hexdigest()
         return raw_text, content_hash
+    except urllib.error.HTTPError as e:
+        if e.code in [404, 403, 410]: # Permanently dead links
+            return None, "DEAD_LINK"
+        return None, None
+    except urllib.error.URLError:
+        return None, "DEAD_LINK" # Domain no longer exists
     except Exception:
         return None, None
 
@@ -101,9 +111,8 @@ def ai_extract_jobs(raw_text, company_name, apply_url):
         print("No Gemini API key found. Skipping AI extraction.")
         return []
         
-    time.sleep(4) # Force a 4-second delay to stay under the 15 RPM limit
-    
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    time.sleep(4) 
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
     
     prompt = f"""
     You are a data extraction bot. Read the following text from the career page of {company_name}.
@@ -114,6 +123,8 @@ def ai_extract_jobs(raw_text, company_name, apply_url):
     {{
       "title": "Job Title",
       "category": "Department (e.g., Agronomy, F&B, Golf Operations)",
+      "job_type": "Full-time, Part-time, Seasonal, Temp, or Contract (if mentioned, otherwise leave blank)",
+      "remote": true or false,
       "description": "A short 2-3 sentence summary of the role.",
       "salary_min": "Number only, e.g., 30000 (if mentioned, otherwise leave blank)",
       "salary_max": "Number only, e.g., 35000 (if mentioned, otherwise leave blank)",
@@ -145,12 +156,22 @@ def ai_extract_jobs(raw_text, company_name, apply_url):
 def process_club(club_data):
     base_url, name, country, stored_career_url, last_hash = club_data
     
+    # Self-Cleaning: Skip permanently dead sites immediately
+    if last_hash in ["DEAD_LINK", "NO_CAREERS_PAGE"]:
+        return None 
+    
     career_url = stored_career_url
     if not career_url:
         career_url = discover_career_page(base_url)
-        if not career_url: return None, base_url, "", ""
+        if not career_url: 
+            return [], base_url, "", "NO_CAREERS_PAGE"
         
     raw_text, current_hash = fetch_and_hash(career_url)
+    
+    # Self-Cleaning: Flag sites that have broken since yesterday
+    if current_hash == "DEAD_LINK":
+        return [], base_url, career_url, "DEAD_LINK"
+        
     if not raw_text or current_hash == last_hash:
         return None, base_url, career_url, current_hash 
         
@@ -168,6 +189,8 @@ def process_club(club_data):
             "description": f"{j.get('description', '')} <p>Apply directly via the {name} careers page.</p>",
             "location": country,
             "category": j.get("category", ""),
+            "job_type": j.get("job_type", ""),
+            "remote": bool(j.get("remote", False)),
             "pubDate": now,
             "salary_min": j.get("salary_min", ""),
             "salary_max": j.get("salary_max", ""),
@@ -179,7 +202,7 @@ def process_club(club_data):
 
 def build_rss(conn):
     c = conn.cursor()
-    c.execute("SELECT title, company, location, category, description, apply_url, job_reference, pubDate, salary_min, salary_max, currency, interval FROM jobs")
+    c.execute("SELECT title, company, location, category, job_type, remote, description, apply_url, job_reference, pubDate, salary_min, salary_max, currency, interval FROM jobs")
     now = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
     
     out = ['<?xml version="1.0" encoding="UTF-8"?>', '<rss version="2.0">', '  <channel>',
@@ -190,13 +213,14 @@ def build_rss(conn):
         out.extend([
             "    <item>", f"      <title>{escape(row[0])}</title>", f"      <company>{escape(row[1])}</company>",
             f"      <location>{escape(row[2])}</location>", f"      <category>{escape(row[3])}</category>",
-            f"      <description><![CDATA[{row[4]}]]></description>", f"      <link>{escape(row[5])}</link>",
-            f"      <apply_url>{escape(row[5])}</apply_url>", f"      <job_reference>{escape(row[6])}</job_reference>",
-            f"      <guid isPermaLink=\"false\">{escape(row[6])}</guid>", f"      <pubDate>{row[7]}</pubDate>",
-            f"      <salary_min>{escape(str(row[8]))}</salary_min>",
-            f"      <salary_max>{escape(str(row[9]))}</salary_max>",
-            f"      <salary_currency>{escape(str(row[10]))}</salary_currency>",
-            f"      <salary_interval>{escape(str(row[11]))}</salary_interval>", "    </item>"
+            f"      <job_type>{escape(row[4])}</job_type>", f"      <remote>{'true' if row[5] else 'false'}</remote>",
+            f"      <description><![CDATA[{row[6]}]]></description>", f"      <link>{escape(row[7])}</link>",
+            f"      <apply_url>{escape(row[7])}</apply_url>", f"      <job_reference>{escape(row[8])}</job_reference>",
+            f"      <guid isPermaLink=\"false\">{escape(row[8])}</guid>", f"      <pubDate>{row[9]}</pubDate>",
+            f"      <salary_min>{escape(str(row[10]))}</salary_min>",
+            f"      <salary_max>{escape(str(row[11]))}</salary_max>",
+            f"      <salary_currency>{escape(str(row[12]))}</salary_currency>",
+            f"      <salary_interval>{escape(str(row[13]))}</salary_interval>", "    </item>"
         ])
     out.extend(["  </channel>", "</rss>"])
     
@@ -209,34 +233,41 @@ def main():
     load_csv_to_db(conn)
     c = conn.cursor()
     
-    c.execute("SELECT url, name, country, career_url, last_hash FROM clubs")
+    c.execute("SELECT url, name, country, career_url, last_hash FROM clubs ORDER BY last_hash ASC")
     clubs = c.fetchall()
     
-    print(f"Beginning scan of {len(clubs)} domains...")
+    print(f"Beginning scan. Graceful timeout set to {MAX_RUNTIME_SECONDS} seconds...")
     
     updates_to_make = []
     jobs_to_insert = []
+    start_time = time.time()
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        results = executor.map(process_club, clubs)
+        futures = [executor.submit(process_club, club) for club in clubs]
         
-        for result in results:
+        for future in concurrent.futures.as_completed(futures):
+            if time.time() - start_time > MAX_RUNTIME_SECONDS:
+                print("Approaching GitHub's 6-hour limit! Stopping gracefully to save data...")
+                executor.shutdown(wait=False, cancel_futures=True)
+                break
+                
+            result = future.result()
             if not result: continue
+            
             extracted_jobs, base_url, career_url, current_hash = result
             
-            if career_url:
-                updates_to_make.append((career_url, current_hash, base_url))
+            updates_to_make.append((career_url, current_hash, base_url))
                 
             if extracted_jobs:
                 print(f"Found {len(extracted_jobs)} jobs at {base_url}")
                 for j in extracted_jobs:
                     jobs_to_insert.append((j["job_reference"], j["title"], j["company"], j["apply_url"], 
-                                           j["description"], j["location"], j["category"], j["pubDate"],
-                                           j["salary_min"], j["salary_max"], j["currency"], j["interval"]))
+                                           j["description"], j["location"], j["category"], j["job_type"],
+                                           j["remote"], j["pubDate"], j["salary_min"], j["salary_max"], 
+                                           j["currency"], j["interval"]))
 
     c.executemany("UPDATE clubs SET career_url = ?, last_hash = ? WHERE url = ?", updates_to_make)
-    c.execute("DELETE FROM jobs") 
-    c.executemany("INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", jobs_to_insert)
+    c.executemany("INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", jobs_to_insert)
     conn.commit()
     
     build_rss(conn)
