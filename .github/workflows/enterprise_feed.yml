@@ -1,0 +1,40 @@
+name: Enterprise Jobs Feed
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      
+      - name: Create Public Folder
+        run: mkdir -p public
+        
+      - name: Preserve Club Feed (If Exists)
+        run: curl -sSf https://golf-jobs.github.io/golf-jobs-feed/independent_clubs.xml -o public/independent_clubs.xml || echo "No club feed yet"
+        
+      - name: Run Enterprise Aggregator
+        run: python3 feed_generator.py --out public/feed.xml
+        
+      - name: Upload Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+          
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
