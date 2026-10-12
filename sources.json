@@ -86,6 +86,7 @@
     { "enabled": true,  "slug": "dream-golf",       "company": "Bandon Dunes / Sand Valley",  "ats": "lever", "token": "dreamgolf", "golf_only": true },
     { "enabled": true,  "slug": "cabot",            "company": "Cabot",                       "ats": "smartrecruiters", "token": "Cabot-CabotCapeBreton", "golf_only": true },
     { "enabled": true,  "slug": "pinehurst",        "company": "Pinehurst Resort",            "ats": "dayforce", "token": "pinehurst", "job_board_code": "CANDIDATEPORTAL", "golf_only": true },
+    { "enabled": true,  "slug": "trump-turnberry",  "company": "Trump Turnberry",              "ats": "harri", "token": "trumpturnberry", "golf_only": false },
 
     "--- JBOARD WEB SCRAPER CATCH-UP (WORKDAY) ---",
     { "enabled": true,  "slug": "augusta-national", "company": "Augusta National",            "ats": "workday", "host": "augustanational.wd1.myworkdayjobs.com", "tenant": "augustanational", "site": "External" },
