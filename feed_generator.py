@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Golf Jobs — master XML feed generator for JBoard.
-Enforces strict taxonomy mapping, anti-keyword filtering, public advert URLs, salary extraction, and a 20-day freshness limit.
+Enforces strict taxonomy mapping, anti-keyword filtering, public advert URLs, salary extraction, and a 60-day freshness limit.
 """
 
 import argparse
@@ -107,7 +107,6 @@ def _to_rfc822(value):
     except Exception: return datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
 
 def make_job(source_slug, native_id, title, company, apply_url, description="", location="", category="", job_type="", remote=False, posted=None, salary_min="", salary_max="", currency="", interval=""):
-    # 20-DAY FRESHNESS CHECK
     if posted:
         try:
             if isinstance(posted, (int, float)):
@@ -119,12 +118,10 @@ def make_job(source_slug, native_id, title, company, apply_url, description="", 
                     dt = email.utils.parsedate_to_datetime(p_str).astimezone(timezone.utc)
                 else:
                     dt = datetime.fromisoformat(p_str.replace("Z", "+00:00")).astimezone(timezone.utc)
-            
-            # If the job was published more than 20 days ago, instantly reject it.
-            if (datetime.now(timezone.utc) - dt).days > 20:
+            if (datetime.now(timezone.utc) - dt).days > 60:
                 return None
         except Exception:
-            pass # Keep job if date parsing fails
+            pass 
 
     return {
         "job_reference": f"{source_slug}-{native_id}",
@@ -267,7 +264,7 @@ def fetch_rezoomo(src):
     return [make_job(src["slug"], m.group(1).split("/")[-1] or m.group(1).split("/")[-2], m.group(2).strip(), src["company"], "https://www.rezoomo.com" + m.group(1), f"<p>View full job details on the {src['company']} careers site.</p>") for m in re.finditer(r'<a[^>]+href="(/job/[^"]+)"[^>]*>.*?<h[23][^>]*>(.*?)</h[23]>', text, re.IGNORECASE | re.DOTALL)]
 
 def fetch_adidas(src):
-    try: data = _http("https://careers.adidas-group.com/api/jobs/search?brand=adidas&locale=en&limit=1000")
+    try: data = _http("https://careers.adidas-group.com/api/jobs/search?keywords=golf&locale=en&limit=1000")
     except Exception: return []
     return [make_job(src["slug"], str(j.get("id", "")), j.get("title"), src["company"], f"https://careers.adidas-group.com/jobs/{j.get('id')}", j.get("description", ""), j.get("location", ""), j.get("team", "")) for j in data.get("jobs", [])]
 
@@ -357,8 +354,31 @@ def main():
         if not ADAPTERS.get(src["ats"]): continue
         try:
             jobs = ADAPTERS[src["ats"]](src)
-            # Remove any jobs that failed the 20-day age check
             jobs = [j for j in jobs if j is not None]
+            
+            # --- APPLY BRAND SPLITS AND OVERRIDES ---
+            for j in jobs:
+                comp = j.get("company", "")
+                
+                # 1. Titleist / FootJoy -> Acushnet
+                if "Titleist" in comp and "FootJoy" in comp:
+                    j["company"] = "Acushnet"
+                    
+                # 2. Callaway & TravisMathew Split
+                elif "Callaway" in comp and "TravisMathew" in comp:
+                    check_text = (j.get("title", "") + " " + j.get("apply_url", "") + " " + j.get("description", "")).lower()
+                    if "travismathew" in check_text or "travis mathew" in check_text:
+                        j["company"] = "TravisMathew"
+                    else:
+                        j["company"] = "Callaway Golf"
+                        
+                # 3. DICK'S Sporting Goods & Golf Galaxy Split
+                elif "Dick's" in comp or "Golf Galaxy" in comp:
+                    check_text = (j.get("title", "") + " " + j.get("apply_url", "") + " " + j.get("description", "")).lower()
+                    if "golf galaxy" in check_text:
+                        j["company"] = "Golf Galaxy"
+                    else:
+                        j["company"] = "DICK'S Sporting Goods"
             
             if src.get("golf_only"):
                 filtered = []
