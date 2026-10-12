@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Golf Jobs — master XML feed generator for JBoard.
-Enforces strict taxonomy mapping, anti-keyword filtering, public advert URLs, salary extraction, and a 30-day freshness limit.
+Enforces strict taxonomy mapping, anti-keyword filtering (excluding company names), public advert URLs, optimized ATS API querying, and a 30-day freshness limit.
 """
 
 import argparse
@@ -118,7 +118,8 @@ def make_job(source_slug, native_id, title, company, apply_url, description="", 
                     dt = email.utils.parsedate_to_datetime(p_str).astimezone(timezone.utc)
                 else:
                     dt = datetime.fromisoformat(p_str.replace("Z", "+00:00")).astimezone(timezone.utc)
-            # 30 DAY FRESHNESS LIMIT
+            
+            # 30-DAY FRESHNESS LIMIT
             if (datetime.now(timezone.utc) - dt).days > 30:
                 return None
         except Exception:
@@ -185,8 +186,12 @@ def fetch_workable(src):
 def fetch_workday(src):
     host, tenant, site = src["host"], src["tenant"], src["site"]
     base, jobs, offset = f"https://{host}/wday/cxs/{tenant}/{site}", [], 0
+    
+    # Pre-filter Workday query if golf_only is active to prevent timeouts
+    search_query = "golf" if src.get("golf_only") else ""
+    
     while True:
-        data = _http(f"{base}/jobs", method="POST", data={"limit": 20, "offset": offset, "searchText": "", "appliedFacets": {}})
+        data = _http(f"{base}/jobs", method="POST", data={"limit": 20, "offset": offset, "searchText": search_query, "appliedFacets": {}})
         postings = data.get("jobPostings", [])
         for p in postings:
             ext = p.get("externalPath", "")
@@ -391,7 +396,8 @@ def main():
                     if any(anti in title_lower for anti in anti_keywords):
                         continue
                         
-                    search_text = f"{title_lower} {j.get('category','').lower()} {j.get('description','').lower()} {j.get('company','').lower()}"
+                    # BUG FIX: Company name removed from search string to prevent bypassing the filter
+                    search_text = f"{title_lower} {j.get('category','').lower()} {j.get('description','').lower()}"
                     if any(k in search_text for k in keywords): filtered.append(j)
                 report.append(f"FILTER {src['company']}: kept {len(filtered)} of {len(jobs)} jobs")
                 jobs = filtered
