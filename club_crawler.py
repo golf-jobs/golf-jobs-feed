@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Global Independent Club Crawler & AI Parser
-Discovers career pages, uses AI to extract jobs, features a self-cleaning dead-link database, and maintains 1:1 XML parity with the Enterprise feed.
+Discovers career pages, uses AI to extract jobs, features a self-cleaning dead-link database, and maintains 1:1 XML parity.
+Strict taxonomy enforcement added to prevent AI hallucinations.
 """
 
 import csv
@@ -31,13 +32,49 @@ MAX_WORKERS = 2
 TIMEOUT = 10
 MAX_RUNTIME_SECONDS = (5 * 3600) + (15 * 60) # 5 hours and 15 minutes
 
+# --- STRICT TAXONOMY MAPPERS ---
+def map_category(raw_cat, title, desc):
+    search_text = f"{str(raw_cat)} {str(title)}".lower()
+    if any(k in search_text for k in ["agronomy", "turf", "greenkeep", "grounds", "landscap", "course maintenance", "mechanic", "superintendent"]): return "Greenkeeping"
+    if any(k in search_text for k in ["food", "beverage", "f&b", "culinary", "chef", "cook", "bartender", "server", "restaurant", "hospitality", "kitchen", "waiter", "banquet"]): return "Hospitality"
+    if any(k in search_text for k in ["pga", "teaching", "instructor", "assistant pro", "head pro", "golf professional", "coach"]): return "PGA Professional"
+    if any(k in search_text for k in ["general manager", "director of golf", "club manager", "operations manager"]): return "Club Management"
+    if any(k in search_text for k in ["retail", "merchandis", "buyer", "apparel"]): return "Retail"
+    if any(k in search_text for k in ["pro shop", "golf shop", "outside service", "bag drop", "cart attendant", "starter", "ranger"]): return "Pro Shop"
+    if any(k in search_text for k in ["sales", "account executive", "business development"]): return "Sales"
+    if any(k in search_text for k in ["marketing", "social media", "content", "pr", "communications", "brand"]): return "Marketing"
+    if any(k in search_text for k in ["finance", "account", "controller", "audit", "tax"]): return "Finance"
+    if any(k in search_text for k in ["hr ", "human resources", "talent", "recruit"]): return "Human Resources"
+    if any(k in search_text for k in ["tech", "software", "developer", "it ", "data", "engineer", "product manager"]): return "Technology"
+    if any(k in search_text for k in ["caddie", "caddy"]): return "Caddie"
+    if any(k in search_text for k in ["event", "tournament", "wedding"]): return "Events"
+    if any(k in search_text for k in ["customer service", "guest service", "reception", "front desk"]): return "Customer Service"
+    if any(k in search_text for k in ["manufactur", "production", "assembl", "factory"]): return "Manufacturing"
+    if any(k in search_text for k in ["logistic", "warehouse", "supply chain", "shipping", "distribution"]): return "Logistics"
+    if any(k in search_text for k in ["leisure", "fitness", "recreation"]): return "Leisure"
+    if any(k in search_text for k in ["legal", "counsel"]): return "Legal"
+    if any(k in search_text for k in ["travel"]): return "Travel"
+    if any(k in search_text for k in ["construction"]): return "Construction"
+    if any(k in search_text for k in ["driving range", "topgolf"]): return "Driving Range"
+    if any(k in search_text for k in ["business", "strategy", "analyst"]): return "Business"
+    if any(k in search_text for k in ["engineer"]): return "Engineering"
+    return "" 
+
+def map_job_type(raw_type, title):
+    search_text = f"{str(raw_type)} {str(title)}".lower()
+    if "part" in search_text or "pt " in search_text: return "Part-time"
+    if "full" in search_text or "ft " in search_text: return "Full-time"
+    if "contract" in search_text or "freelance" in search_text: return "Contract"
+    if "intern" in search_text: return "Internship"
+    if "temp" in search_text or "seasonal" in search_text or "summer" in search_text: return "Temp"
+    return "" 
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS clubs
                  (url TEXT PRIMARY KEY, name TEXT, country TEXT, career_url TEXT, last_hash TEXT)''')
     
-    # Dropped and recreated to add job_type and remote columns
     c.execute('DROP TABLE IF EXISTS jobs')
     c.execute('''CREATE TABLE jobs
                  (job_reference TEXT PRIMARY KEY, title TEXT, company TEXT, apply_url TEXT, 
@@ -94,14 +131,14 @@ def fetch_and_hash(url):
         raw_text = re.sub(r'<[^>]+>', ' ', html)
         raw_text = re.sub(r'\s+', ' ', raw_text).strip()
         
-        content_hash = hashlib.sha256(raw_text.encode('utf-8')).hexdigest()
+        content_hash = hashlib.sha256((raw_text + "v2").encode('utf-8')).hexdigest()
         return raw_text, content_hash
     except urllib.error.HTTPError as e:
-        if e.code in [404, 403, 410]: # Permanently dead links
+        if e.code in [404, 403, 410]: 
             return None, "DEAD_LINK"
         return None, None
     except urllib.error.URLError:
-        return None, "DEAD_LINK" # Domain no longer exists
+        return None, "DEAD_LINK" 
     except Exception:
         return None, None
 
@@ -112,7 +149,8 @@ def ai_extract_jobs(raw_text, company_name, apply_url):
         return []
         
     time.sleep(4) 
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
+    
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     prompt = f"""
     You are a data extraction bot. Read the following text from the career page of {company_name}.
@@ -156,7 +194,6 @@ def ai_extract_jobs(raw_text, company_name, apply_url):
 def process_club(club_data):
     base_url, name, country, stored_career_url, last_hash = club_data
     
-    # Self-Cleaning: Skip permanently dead sites immediately
     if last_hash in ["DEAD_LINK", "NO_CAREERS_PAGE"]:
         return None 
     
@@ -168,7 +205,6 @@ def process_club(club_data):
         
     raw_text, current_hash = fetch_and_hash(career_url)
     
-    # Self-Cleaning: Flag sites that have broken since yesterday
     if current_hash == "DEAD_LINK":
         return [], base_url, career_url, "DEAD_LINK"
         
@@ -209,19 +245,47 @@ def build_rss(conn):
            '    <title>Global Independent Golf Clubs Feed</title>', '    <link>https://www.golf-jobs.com</link>',
            '    <description>Jobs extracted via AI from 28,000+ independent club websites</description>', f'    <lastBuildDate>{now}</lastBuildDate>']
            
-    for row in c.fetchall():
+    jobs = c.fetchall()
+    
+    if not jobs:
         out.extend([
-            "    <item>", f"      <title>{escape(row[0])}</title>", f"      <company>{escape(row[1])}</company>",
-            f"      <location>{escape(row[2])}</location>", f"      <category>{escape(row[3])}</category>",
-            f"      <job_type>{escape(row[4])}</job_type>", f"      <remote>{'true' if row[5] else 'false'}</remote>",
-            f"      <description><![CDATA[{row[6]}]]></description>", f"      <link>{escape(row[7])}</link>",
-            f"      <apply_url>{escape(row[7])}</apply_url>", f"      <job_reference>{escape(row[8])}</job_reference>",
-            f"      <guid isPermaLink=\"false\">{escape(row[8])}</guid>", f"      <pubDate>{row[9]}</pubDate>",
-            f"      <salary_min>{escape(str(row[10]))}</salary_min>",
-            f"      <salary_max>{escape(str(row[11]))}</salary_max>",
-            f"      <salary_currency>{escape(str(row[12]))}</salary_currency>",
-            f"      <salary_interval>{escape(str(row[13]))}</salary_interval>", "    </item>"
+            "    <item>", 
+            "      <title>System Mapping Placeholder</title>", 
+            "      <company>Golf Jobs Internal</company>",
+            "      <location>Manchester, UK</location>", 
+            "      <category>Technology</category>",
+            "      <job_type>Full-time</job_type>", 
+            "      <remote>true</remote>",
+            "      <description><![CDATA[This is a hidden placeholder job used to map XML fields in JBoard. You can delete this in JBoard.]]></description>", 
+            "      <link>https://www.golf-jobs.com</link>",
+            "      <apply_url>https://www.golf-jobs.com</apply_url>", 
+            "      <job_reference>MAPPING-001</job_reference>",
+            "      <guid isPermaLink=\"false\">MAPPING-001</guid>", 
+            f"      <pubDate>{now}</pubDate>",
+            "      <salary_min>30000</salary_min>",
+            "      <salary_max>40000</salary_max>",
+            "      <salary_currency>GBP</salary_currency>",
+            "      <salary_interval>YEARLY</salary_interval>", 
+            "    </item>"
         ])
+    else:
+        for row in jobs:
+            # Enforce the strict taxonomy mapping on the AI output
+            mapped_category = map_category(row[3], row[0], row[6])
+            mapped_job_type = map_job_type(row[4], row[0])
+            
+            out.extend([
+                "    <item>", f"      <title>{escape(row[0])}</title>", f"      <company>{escape(row[1])}</company>",
+                f"      <location>{escape(row[2])}</location>", f"      <category>{escape(mapped_category)}</category>",
+                f"      <job_type>{escape(mapped_job_type)}</job_type>", f"      <remote>{'true' if row[5] else 'false'}</remote>",
+                f"      <description><![CDATA[{row[6]}]]></description>", f"      <link>{escape(row[7])}</link>",
+                f"      <apply_url>{escape(row[7])}</apply_url>", f"      <job_reference>{escape(row[8])}</job_reference>",
+                f"      <guid isPermaLink=\"false\">{escape(row[8])}</guid>", f"      <pubDate>{row[9]}</pubDate>",
+                f"      <salary_min>{escape(str(row[10]))}</salary_min>",
+                f"      <salary_max>{escape(str(row[11]))}</salary_max>",
+                f"      <salary_currency>{escape(str(row[12]))}</salary_currency>",
+                f"      <salary_interval>{escape(str(row[13]))}</salary_interval>", "    </item>"
+            ])
     out.extend(["  </channel>", "</rss>"])
     
     os.makedirs(os.path.dirname(OUTPUT_XML), exist_ok=True)
