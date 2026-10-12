@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Golf Jobs — master XML feed generator for JBoard.
-Enforces strict taxonomy mapping, anti-keyword filtering, public advert URLs, salary extraction, and a 60-day freshness limit.
+Enforces strict taxonomy mapping, anti-keyword filtering, public advert URLs, salary extraction, and a 30-day freshness limit.
 """
 
 import argparse
@@ -118,7 +118,8 @@ def make_job(source_slug, native_id, title, company, apply_url, description="", 
                     dt = email.utils.parsedate_to_datetime(p_str).astimezone(timezone.utc)
                 else:
                     dt = datetime.fromisoformat(p_str.replace("Z", "+00:00")).astimezone(timezone.utc)
-            if (datetime.now(timezone.utc) - dt).days > 60:
+            # 30 DAY FRESHNESS LIMIT
+            if (datetime.now(timezone.utc) - dt).days > 30:
                 return None
         except Exception:
             pass 
